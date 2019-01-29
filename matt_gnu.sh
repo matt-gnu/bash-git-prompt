@@ -21,5 +21,12 @@ GIT_PROMPT_THEME="Solarized_UserHost"
 # GIT_PROMPT_THEME_FILE=~/.git-prompt-colors.sh
 # GIT_PROMPT_THEME=Solarized # use theme optimized for solarized color scheme
 
+function prompt_callback {
+    if [ `jobs | wc -l` -ne 0 ]; then
+        echo -n " jobs:\j"
+    fi
+}
+
+
 SCRIPTPATH="$(dirname ${BASH_SOURCE[0]})"
 source "${SCRIPTPATH}/gitprompt.sh"
