@@ -36,7 +36,7 @@ else
   remote_url='.'
 fi
 
-gitstatus=$( LC_ALL=C git status ${_ignore_submodules} --untracked-files="${__GIT_PROMPT_SHOW_UNTRACKED_FILES:-normal}" --porcelain --branch )
+gitstatus=$( LC_ALL=C git --no-optional-locks status ${_ignore_submodules} --untracked-files="${__GIT_PROMPT_SHOW_UNTRACKED_FILES:-normal}" --porcelain --branch )
 
 # if the status is fatal, exit now
 [[ ! "${?}" ]] && exit 0
@@ -105,7 +105,6 @@ while IFS='' read -r line || [[ -n "${line}" ]]; do
       AA) ((num_conflicts++)); break;;
       #two character matches, first loop
       ?M) ((num_changed++)) ;;
-      ?D) ((num_changed++)) ;;
       ?\ ) ;;
       #single character matches, second loop
       U) ((num_conflicts++)) ;;
