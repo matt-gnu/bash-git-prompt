@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
 
+# bash/zsh cross compatibility notes:
+# - always use ${array[@]:offset:length} syntax for array indexing
+
 function async_run() {
   {
     eval "$@" &> /dev/null
   }&
 }
+
+function async_run_zsh() {
+  {
+    eval "$@" &> /dev/null
+
+  # `true` is used here to allow bash to parse the script, as the zsh `&!` syntax will otherwise stop parsing prior to any execution.
+  }&! true
+}
+
 
 function set_git_prompt_dir() {
   # code thanks to http://stackoverflow.com/questions/59895
@@ -308,6 +320,8 @@ function we_are_on_repo() {
 
 function update_old_git_prompt() {
   if [[ "${GIT_PROMPT_OLD_DIR_WAS_GIT:-0}" = 0 ]]; then
+    OLD_PROMPT_START="${PROMPT_START}"
+    OLD_PROMPT_END="${PROMPT_END}"
     OLD_GITPROMPT="${PS1}"
   fi
 
@@ -320,6 +334,8 @@ function setGitPrompt() {
   local repo=$(git rev-parse --show-toplevel 2> /dev/null)
   if [[ ! -e "${repo}" ]] && [[ "${GIT_PROMPT_ONLY_IN_REPO-}" = 1 ]]; then
     # we do not permit bash-git-prompt outside git repos, so nothing to do
+    PROMPT_START=${OLD_PROMPT_START}
+    PROMPT_END=${OLD_PROMPT_END}
     PS1="${OLD_GITPROMPT}"
     return
   fi
@@ -438,8 +454,12 @@ function checkUpstream() {
   then
     if [[ -n $(git remote show) ]]; then
       (
-        async_run "GIT_TERMINAL_PROMPT=0 git fetch --quiet"
-        disown -h
+        if [ -n "$ZSH_VERSION" ]; then
+          async_run_zsh "GIT_TERMINAL_PROMPT=0 git fetch --quiet"
+        else
+          async_run "GIT_TERMINAL_PROMPT=0 git fetch --quiet"
+          disown -h
+        fi
       )
     fi
   fi
@@ -456,8 +476,9 @@ function replaceSymbols() {
   local VALUE="${1//_AHEAD_/${GIT_PROMPT_SYMBOLS_AHEAD}}"
   local VALUE1="${VALUE//_BEHIND_/${GIT_PROMPT_SYMBOLS_BEHIND}}"
   local VALUE2="${VALUE1//_NO_REMOTE_TRACKING_/${GIT_PROMPT_SYMBOLS_NO_REMOTE_TRACKING}}"
+  local VALUE3="${VALUE2//_PRETAG_/${GIT_PROMPT_SYMBOLS_PRETAG}}"
 
-  echo "${VALUE2//_PREHASH_/${GIT_PROMPT_SYMBOLS_PREHASH}}"
+  echo "${VALUE3//_PREHASH_/${GIT_PROMPT_SYMBOLS_PREHASH}}"
 
   # reenable globbing symbols
   set +f
@@ -477,6 +498,28 @@ function createPrivateIndex {
   echo "${__GIT_INDEX_PRIVATE}"
 }
 
+function get_branch_prefix() {
+    local GIT_BRANCH="${1}"
+    local DETACHED_HEAD="${2}"
+
+    case "$GIT_BRANCH" in
+      ${GIT_PROMPT_MASTER_BRANCHES})
+        local IS_MASTER_BRANCH=1
+        ;;
+      *)
+        local IS_MASTER_BRANCH=0
+        ;;
+    esac
+
+    if [[ "$IS_MASTER_BRANCH" == "1" ]]; then
+        echo "$GIT_PROMPT_MASTER_BRANCH"
+    elif [[ "$DETACHED_HEAD" = "1" ]]; then
+        echo "$GIT_PROMPT_DETACHED_HEAD"
+    else
+        echo "$GIT_PROMPT_BRANCH"
+    fi
+}
+
 function updatePrompt() {
   local LAST_COMMAND_INDICATOR
   local PROMPT_LEADING_SPACE
@@ -484,6 +527,9 @@ function updatePrompt() {
   local PROMPT_END
   local EMPTY_PROMPT
   local Blue="\[\033[0;34m\]"
+  if [ -n "$ZSH_VERSION" ]; then
+    Blue='%{fg[blue]%}'
+  fi
 
   git_prompt_config
 
@@ -503,33 +549,33 @@ function updatePrompt() {
   local -a git_status_fields
   while IFS=$'\n' read -r line; do git_status_fields+=("${line}"); done < <("${__GIT_STATUS_CMD}" 2>/dev/null)
 
-  export GIT_BRANCH=$(replaceSymbols "${git_status_fields[0]}")
+  export GIT_BRANCH=$(replaceSymbols "${git_status_fields[@]:0:1}")
   if [[ $__GIT_PROMPT_SHOW_TRACKING != "0" ]]; then
-    local GIT_REMOTE="$(replaceSymbols "${git_status_fields[1]}")"
+    local GIT_REMOTE="$(replaceSymbols "${git_status_fields[@]:1:1}")"
     if [[ "." == "${GIT_REMOTE}" ]]; then
       unset GIT_REMOTE
     fi
   fi
-  local GIT_REMOTE_USERNAME_REPO="$(replaceSymbols "${git_status_fields[2]}")"
+  local GIT_REMOTE_USERNAME_REPO="$(replaceSymbols "${git_status_fields[@]:2:1}")"
   if [[ "." == "${GIT_REMOTE_USERNAME_REPO}" ]]; then
     unset GIT_REMOTE_USERNAME_REPO
   fi
 
   local GIT_FORMATTED_UPSTREAM
-  local GIT_UPSTREAM_PRIVATE="${git_status_fields[3]}"
+  local GIT_UPSTREAM_PRIVATE="${git_status_fields[@]:3:1}"
   if [[ "${__GIT_PROMPT_SHOW_UPSTREAM:-0}" != "1" || "^" == "${GIT_UPSTREAM_PRIVATE}" ]]; then
     unset GIT_FORMATTED_UPSTREAM
   else
     GIT_FORMATTED_UPSTREAM="${GIT_PROMPT_UPSTREAM//_UPSTREAM_/${GIT_UPSTREAM_PRIVATE}}"
   fi
 
-  local GIT_STAGED="${git_status_fields[4]}"
-  local GIT_CONFLICTS="${git_status_fields[5]}"
-  local GIT_CHANGED="${git_status_fields[6]}"
-  local GIT_UNTRACKED="${git_status_fields[7]}"
-  local GIT_STASHED="${git_status_fields[8]}"
-  local GIT_CLEAN="${git_status_fields[9]}"
-
+  local GIT_STAGED="${git_status_fields[@]:4:1}"
+  local GIT_CONFLICTS="${git_status_fields[@]:5:1}"
+  local GIT_CHANGED="${git_status_fields[@]:6:1}"
+  local GIT_UNTRACKED="${git_status_fields[@]:7:1}"
+  local GIT_STASHED="${git_status_fields[@]:8:1}"
+  local GIT_CLEAN="${git_status_fields[@]:9:1}"
+  local GIT_DETACHED_HEAD="${git_status_fields[@]:10:1}"
 
   local NEW_PROMPT="${EMPTY_PROMPT}"
   if [[ "${#git_status_fields[@]}" -gt 0 ]]; then
@@ -544,14 +590,8 @@ function updatePrompt() {
       fi
     fi
 
-    case "${GIT_BRANCH-}" in
-      ${GIT_PROMPT_MASTER_BRANCHES})
-        local STATUS_PREFIX="${PROMPT_LEADING_SPACE}${GIT_PROMPT_PREFIX_FINAL}${GIT_PROMPT_MASTER_BRANCH}${URL_SHORT-}\${GIT_BRANCH}${ResetColor}${GIT_FORMATTED_UPSTREAM-}"
-        ;;
-      *)
-        local STATUS_PREFIX="${PROMPT_LEADING_SPACE}${GIT_PROMPT_PREFIX_FINAL}${GIT_PROMPT_BRANCH}${URL_SHORT-}\${GIT_BRANCH}${ResetColor}${GIT_FORMATTED_UPSTREAM-}"
-        ;;
-    esac
+    local BRANCH_PREFIX="$(get_branch_prefix $GIT_BRANCH $GIT_DETACHED_HEAD)"
+    local STATUS_PREFIX="${PROMPT_LEADING_SPACE}${GIT_PROMPT_PREFIX_FINAL}${BRANCH_PREFIX}\${GIT_BRANCH}${ResetColor}${GIT_FORMATTED_UPSTREAM}"
     local STATUS=""
 
     # __add_status KIND VALEXPR INSERT
@@ -613,7 +653,13 @@ function gp_add_virtualenv_to_prompt {
   local ACCUMULATED_VENV_PROMPT=""
   local VENV=""
   if [[ -n "${VIRTUAL_ENV-}" && -z "${VIRTUAL_ENV_DISABLE_PROMPT+x}" ]]; then
-    VENV=$(basename "${VIRTUAL_ENV}")
+    if [[ -n "${VIRTUAL_ENV_PROMPT-}" ]]; then
+      # first trim any starting white space and parenthesis, and then do the same to the end
+      VENV="${VIRTUAL_ENV_PROMPT#"${VIRTUAL_ENV_PROMPT%%[![:space:]]*}("}"
+      VENV="${VENV%")${VENV##*[![:space:]]}"}"
+    else
+      VENV=$(basename "${VIRTUAL_ENV}")
+    fi
     ACCUMULATED_VENV_PROMPT="${ACCUMULATED_VENV_PROMPT}${GIT_PROMPT_VIRTUALENV//_VIRTUALENV_/${VENV}}"
   fi
   if [[ -n "${NODE_VIRTUAL_ENV-}" && -z "${NODE_VIRTUAL_ENV_DISABLE_PROMPT+x}" ]]; then
@@ -645,7 +691,7 @@ function gp_truncate_pwd {
 
 # Sets the window title to the given argument string
 function gp_set_window_title {
-  echo -ne "\[\033]0;"${@}"\007\]"
+  echo -ne "\[\033]0;$1\007\]"
 }
 
 function prompt_callback_default {
@@ -677,12 +723,12 @@ function add_prompt_command() {
     return 0
   fi
 
-  if [ -z "$PROMPT_COMMAND" ]; then
+  if [[ -z "$PROMPT_COMMAND" ]]; then
     PROMPT_COMMAND="$new_entry"
     return 0
   fi
 
-  if [ "$insert_before" == "true" ]; then
+  if [[ "$insert_before" == "true" ]]; then
     PROMPT_COMMAND="${new_entry};${PROMPT_COMMAND}"
   else
     PROMPT_COMMAND="${PROMPT_COMMAND};${new_entry}"
@@ -698,9 +744,25 @@ function add_to_end_of_prompt_command() {
 }
 
 function gp_install_prompt {
-  make_prompt_command_clean
-  add_to_end_of_prompt_command "setGitPrompt"
-  add_to_beginning_of_prompt_command "setLastCommandState"
+  # 5.1 supports PROMPT_COMMAND as an array
+  if ((BASH_VERSINFO[0] > 5 || BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1)); then
+    if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare --"* ]]; then
+      make_prompt_command_clean
+      add_to_end_of_prompt_command "setGitPrompt"
+      add_to_beginning_of_prompt_command "setLastCommandState"
+    else
+      if [[ "${PROMPT_COMMAND[*]}" != *setGitPrompt* ]]; then
+        PROMPT_COMMAND+=(setGitPrompt)
+      fi
+      if [[ "${PROMPT_COMMAND[*]}" != *setLastCommandState* ]]; then
+        PROMPT_COMMAND=(setLastCommandState "${PROMPT_COMMAND[@]}")
+      fi
+    fi
+  else
+    make_prompt_command_clean
+    add_to_end_of_prompt_command "setGitPrompt"
+    add_to_beginning_of_prompt_command "setLastCommandState"
+  fi
 
   set_git_prompt_dir
   source "${__GIT_PROMPT_DIR}/git-prompt-help.sh"
